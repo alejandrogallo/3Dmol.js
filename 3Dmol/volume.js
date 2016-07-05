@@ -180,12 +180,13 @@ $3Dmol.VolumeData.prototype.vasp = function(str) {
     var origin = this.origin = new $3Dmol.Vector3(0,0,0);
 
     this.size = {x:nX, y:nY, z:nZ};
-    this.unit = new $3Dmol.Vector3(xVec.x, yVec.y, zVec.z);
 
     // resize the vectors accordingly
     xVec = xVec.multiplyScalar(1/(l_units*nX));
     yVec = yVec.multiplyScalar(1/(l_units*nY));
     zVec = zVec.multiplyScalar(1/(l_units*nZ));
+
+    this.unit = new $3Dmol.Vector3(xVec.x, yVec.y, zVec.z);
 
     if (xVec.y != 0 || xVec.z != 0 || yVec.x != 0 || yVec.z != 0 || zVec.x != 0
             || zVec.y != 0) {
@@ -213,6 +214,7 @@ $3Dmol.VolumeData.prototype.vasp = function(str) {
       preConvertedData[i] = preConvertedData[i]*vol_scale*e_units;
     }
 
+    // This data is now in cube format
     this.data = preConvertedData;
 
     //console.log(xVec);

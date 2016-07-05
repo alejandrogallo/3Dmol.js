@@ -21,9 +21,7 @@ $3Dmol = (function(window) {
    leave this code in if you would like to increase the 
    likelihood of 3Dmol.js remaining supported.
 */
-if('https:' != document.location.protocol) { //not willing to pay for ssl cert
-    $.get("http://3dmol.csb.pitt.edu/track/report.cgi");
-}
+$.get("http://3dmol.csb.pitt.edu/track/report.cgi");
 
 /* shims for IE */
 /*
@@ -41,6 +39,62 @@ if (!String.prototype.endsWith) {
         return this.indexOf(suffix, this.length - suffix.length) !== -1;
     };
 }
+
+/**
+*
+* jquery.binarytransport.js
+*
+* @description. jQuery ajax transport for making binary data type requests.
+* @version 1.0 
+* @author Henry Algus <henryalgus@gmail.com>
+*
+*/
+
+// use this transport for "binary" data type
+$.ajaxTransport(
+               "+binary",
+               function(options, originalOptions, jqXHR) {
+                   // check for conditions and support for blob / arraybuffer response type
+                   if (window.FormData
+                           && ((options.dataType && (options.dataType == 'binary')) || (options.data && ((window.ArrayBuffer && options.data instanceof ArrayBuffer) || (window.Blob && options.data instanceof Blob))))) {
+                       return {
+                           // create new XMLHttpRequest
+                           send : function(headers, callback) {
+                               // setup all variables
+                               var xhr = new XMLHttpRequest(), url = options.url, type = options.type, async = options.async || true,
+                               // blob or arraybuffer. Default is blob
+                               dataType = options.responseType || "blob", data = options.data
+                                       || null, username = options.username
+                                       || null, password = options.password
+                                       || null;
+
+                               xhr.addEventListener('load', function() {
+                                   var data = {};
+                                   data[options.dataType] = xhr.response;
+                                   // make callback and send data
+                                   callback(xhr.status, xhr.statusText,
+                                           data,
+                                           xhr.getAllResponseHeaders());
+                               });
+
+                               xhr.open(type, url, async, username,
+                                       password);
+
+                               // setup custom headers
+                               for ( var i in headers) {
+                                   xhr.setRequestHeader(i, headers[i]);
+                               }
+
+                               xhr.responseType = dataType;
+                               xhr.send(data);
+                           },
+                           abort : function() {
+                               jqXHR.abort();
+                           }
+                       };
+                   }
+               });
+
     
 /**
  * Create and initialize an appropriate viewer at supplied HTML element using specification in config
@@ -114,35 +168,63 @@ $3Dmol.download = function(query, viewer, options, callback) {
     var type = "";
     var pdbUri = "";
     var m = viewer.addModel();
-    if (query.substr(0, 4) === 'pdb:') {
-        pdbUri = options && options.pdbUri ? options.pdbUri : "http://www.rcsb.org/pdb/files/";
-        type = options && options.format ? options.format : "pdb";
-        query = query.substr(4).toUpperCase();
-        if (!query.match(/^[1-9][A-Za-z0-9]{3}$/)) {
-           alert("Wrong PDB ID"); return;
-        }
-        if (options && options.format)
-            uri = pdbUri + query + "." + options.format;
-        else
-            uri = pdbUri + query + ".pdb";
-
-    } else if (query.substr(0, 4) == 'cid:') {
-        type = "sdf";
-        query = query.substr(4);
-        if (!query.match(/^[0-9]+$/)) {
-           alert("Wrong Compound ID"); return;
-        }
-        uri = "http://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/" + query + 
-          "/SDF?record_type=3d";
+    
+    if (query.substr(0, 5) === 'mmtf:') {
+        pdbUri = options && options.pdbUri ? options.pdbUri : "http://mmtf.rcsb.org/full/";
+        query = query.substr(5).toUpperCase();
+        var uri = pdbUri + query + ".mmtf";        
+        
+        $.ajax({url:uri, 
+            type: "GET",
+            dataType: "binary",
+            responseType: "arraybuffer",
+            processData: false}).done(
+                function(ret, txt, response) {
+                    m.addMolData(ret, 'mmtf');
+                    viewer.zoomTo();
+                    viewer.render();
+                    if(callback) callback(m);
+                }).fail(function(e,txt) { 
+                    console.log(txt);
+                    });
     }
-
-   $.get(uri, function(ret) {
-      m.addMolData(ret, type, options);
-      viewer.zoomTo();
-      viewer.render();
-      if(callback) callback(m);
-
-   });
+    else {
+        if (query.substr(0, 4) === 'pdb:') {
+            pdbUri = options && options.pdbUri ? options.pdbUri : "http://www.rcsb.org/pdb/files/";
+            type = options && options.format ? options.format : "pdb";
+            if(options && typeof options.noComputeSecondaryStructure === 'undefined') {
+                //when fetch directly from pdb, trust structure annotations
+                options.noComputeSecondaryStructure = true;
+            }
+            query = query.substr(4).toUpperCase();
+            if (!query.match(/^[1-9][A-Za-z0-9]{3}$/)) {
+               alert("Wrong PDB ID"); return;
+            }
+            if (options && options.format)
+                uri = pdbUri + query + "." + options.format;
+            else
+                uri = pdbUri + query + ".pdb";
+    
+        } else if (query.substr(0, 4) == 'cid:') {
+            type = "sdf";
+            query = query.substr(4);
+            if (!query.match(/^[0-9]+$/)) {
+               alert("Wrong Compound ID"); return;
+            }
+            uri = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/" + query + 
+              "/SDF?record_type=3d";
+        }
+    
+       $.get(uri, function(ret) {
+          m.addMolData(ret, type, options);
+          viewer.zoomTo();
+          viewer.render();
+          if(callback) callback(m);
+    
+       }).fail(function(e) {
+        console.log("fetch of "+uri+" failed: "+e.statusText);
+       });
+   }
    
    return m;
 };
@@ -375,5 +457,11 @@ $3Dmol.getPropertyRange = function (atomlist, prop) {
         max = min;
 
     return [ min, max ];
+}
+
+//hackish way to work with requirejs - doesn't actually work yet
+//since we doing use the require optimizer to combine modules
+if( typeof(define) === 'function' && define.amd) {
+    define('$3Dmol',$3Dmol);
 }
 

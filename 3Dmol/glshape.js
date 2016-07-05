@@ -609,6 +609,14 @@ $3Dmol.GLShape = (function() {
         shape.clickable = stylespec.clickable ? true : false;
         shape.callback = typeof (stylespec.callback) === "function" ? stylespec.callback
                 : null;
+
+        shape.hoverable = stylespec.hoverable ? true : false;
+        shape.hover_callback = typeof (stylespec.hover_callback) === "function" ? stylespec.hover_callback
+                : null;
+
+	shape.unhover_callback = typeof (stylespec.unhover_callback) === "function" ? stylespec.unhover_callback
+                : null;
+
         shape.hidden = stylespec.hidden;
     };
 
@@ -835,6 +843,7 @@ $3Dmol.GLShape = (function() {
          * @param {IsoSurfaceSpec} isoSpec - volumetric data shape specification
          */
         this.addIsosurface = function(data, volSpec) {
+           
             var isoval = (volSpec.isoval !== undefined && typeof (volSpec.isoval) === "number") ? volSpec.isoval
                     : 0.0;
             var voxel = (volSpec.voxel) ? true : false;
@@ -845,22 +854,23 @@ $3Dmol.GLShape = (function() {
             var nZ = data.size.z;
             var vertnums = new Int16Array(nX * nY * nZ);
             var vals = data.data;
+
             var i, il;
 
             for (i = 0, il = vertnums.length; i < il; ++i)
                 vertnums[i] = -1;
 
-            //mark locations partitioned by isoval
             var bitdata = new Uint8Array(nX * nY * nZ);
-
+           
+            //mark locations partitioned by isoval
             for (i = 0, il = vals.length; i < il; ++i) {
                 var val = (isoval >= 0) ? vals[i] - isoval : isoval - vals[i];
-
+                val = (val > isoval) ? 0 : val;
                 if (val > 0)
                     bitdata[i] |= ISDONE;
 
             }
-
+               
             var verts = [], faces = [];
 
             $3Dmol.MarchingCube.march(bitdata, verts, faces, {
@@ -873,17 +883,84 @@ $3Dmol.GLShape = (function() {
                 nY : nY,
                 nZ : nZ
             });
-
+            
             if (!voxel && smoothness > 0)
                 $3Dmol.MarchingCube.laplacianSmooth(smoothness, verts, faces);
+            /*
+            loop through selected area 
+                find the 6 max/min points then createa a rectangle out of them
+            loop through verts
+                ommit the points that are not in that range
+    1.33 with
+    1.75 without
+            */
+            
+            var xmax=volSpec.selectedRegion[0],ymax=volSpec.selectedRegion[0],zmax=volSpec.selectedRegion[0],xmin=volSpec.selectedRegion[0],ymin=volSpec.selectedRegion[0],zmin=volSpec.selectedRegion[0];
+            
+            for(var i=0;i<volSpec.selectedRegion.length;i++){
+                if(volSpec.selectedRegion[i].x>xmax.x)
+                    xmax=volSpec.selectedRegion[i];
+                else if(volSpec.selectedRegion[i].x<xmin.x)
+                    xmin=volSpec.selectedRegion[i];
+                if(volSpec.selectedRegion[i].y>ymax.y)
+                    ymax=volSpec.selectedRegion[i];
+                else if(volSpec.selectedRegion[i].y<ymin.y)
+                    ymin=volSpec.selectedRegion[i];
+                if(volSpec.selectedRegion[i].z>zmax.z)
+                    zmax=volSpec.selectedRegion[i];
+                else if(volSpec.selectedRegion[i].z<zmin.z)
+                    zmin=volSpec.selectedRegion[i];
+            }
+            
+            var rad=volSpec.radius;
+            xmax.x=xmax.x+rad;
+            xmin.x=xmin.x-rad;
+            ymin.y=ymin.y-rad;
+            ymax.y=ymax.y+rad;
+            zmin.z=zmin.z-rad;
+            zmax.z=zmax.z+rad;
+            
+            //accounts for radius 
+           
+            var vertexmapping= [];
+            var newvertices= [];
+            var newfaces=[];
+            if(volSpec.selectedRegion!==undefined){
+
+            for(var i=0;i<verts.length; i++){
+                if(verts[i].x>xmin.x && verts[i].x<xmax.x
+                    && verts[i].y > ymin.y && verts[i].y<ymax.y
+                    && verts[i].z > zmin.z && verts[i].z<zmax.z 
+                    && inSelectedRegion(verts[i],volSpec.selectedRegion, volSpec.selectedOffset, volSpec.radius)){
+                    vertexmapping.push(newvertices.length);
+                    newvertices.push(verts[i]);
+
+                }else{
+                    vertexmapping.push(-1);
+                }
+            
+            }
+            for(var i=0; i+2<faces.length; i+=3){
+                 if(vertexmapping[faces[i]]!==-1 && vertexmapping[faces[i+1]]!==-1 && vertexmapping[faces[i+2]]!==-1){
+                    newfaces.push(faces[i]-(faces[i]-vertexmapping[faces[i]]));
+                    newfaces.push(faces[i+1]-(faces[i+1]-vertexmapping[faces[i+1]]));
+                    newfaces.push(faces[i+2]-(faces[i+2]-vertexmapping[faces[i+2]]));
+                }
+            }
+
+            }
+
+            verts=newvertices!==[] ? newvertices:verts;
+            faces=newfaces!==[] ? newfaces:faces;
 
             drawCustom(this, geo, {
                 vertexArr : verts,
                 faceArr : faces,
                 normalArr : [],
-                clickable : volSpec.clickable
+                clickable : volSpec.clickable,
+                hoverable : volSpec.hoverable
             });
-           
+            
             this.updateStyle(volSpec);
             
             //computing bounding sphere from vertices
@@ -903,9 +980,38 @@ $3Dmol.GLShape = (function() {
             var len2 = total.distanceTo(maxv);
             this.boundingSphere.center = total;
             this.boundingSphere.radius = Math.max(len1,len2);
-           
+            console.log(verts.length);
         };
-        
+
+        var inSelectedRegion=function(coordinate,selectedRegion,offset,radius){
+            
+            for(var i=0;i<selectedRegion.length;i++){
+                if(distance_from(selectedRegion[i],coordinate)<=radius)
+                    return true;
+            }
+            return false;
+        }
+        var distance_from= function(c1,c2){
+            return Math.sqrt(Math.pow((c1.x-c2.x),2)+Math.pow((c1.y-c2.y),2)+Math.pow((c1.z-c2.z),2));
+        }
+        /**
+         * @deprecated unnecesary
+
+        */
+        var convert=function(i,j,k,data){
+            var pt;
+            if(data.matrix) {
+                pt = new $3Dmol.Vector3(i,j,k);
+                pt = pt.applyMatrix4(data.matrix);
+                pt = {x: pt.x, y: pt.y, z: pt.z}; //remove vector gunk
+
+            } else {
+                pt.x = data.origin.x+data.unit.x*i;
+                pt.y = data.origin.y+data.unit.y*j;
+                pt.z = data.origin.z+data.unit.z*k;
+            }
+            return pt;
+        }
         /** 
          * @deprecated Use addIsosurface instead
          * Creates custom shape from volumetric data 
